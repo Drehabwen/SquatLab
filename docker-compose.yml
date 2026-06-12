@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: ./backend
+    container_name: squatlab-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - squatlab-data:/app/data
+      # Mount the pose model if you have it locally:
+      # - ./backend/pose_landmarker.task:/app/pose_landmarker.task
+    environment:
+      - APP_ENV=production
+      - APP_DB_PATH=/app/data/qingyue-zhiheng.db
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: squatlab-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  squatlab-data:

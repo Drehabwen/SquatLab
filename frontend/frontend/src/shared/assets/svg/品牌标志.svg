@@ -1,0 +1,29 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆 -->
+  <circle cx="32" cy="32" r="30" fill="#faf9f6" stroke="#14b8a6" stroke-width="2"/>
+  
+  <!-- 深蹲人物图形 -->
+  <g fill="#006b5f">
+    <!-- 头部 -->
+    <circle cx="32" cy="16" r="3"/>
+    
+    <!-- 身体 -->
+    <path d="M32 19V28" stroke="#006b5f" stroke-width="2" stroke-linecap="round"/>
+    
+    <!-- 手臂 -->
+    <path d="M26 21L30 26" stroke="#006b5f" stroke-width="2" stroke-linecap="round"/>
+    <path d="M38 21L34 26" stroke="#006b5f" stroke-width="2" stroke-linecap="round"/>
+    
+    <!-- 腿部 -->
+    <path d="M28 28L24 44" stroke="#006b5f" stroke-width="2" stroke-linecap="round"/>
+    <path d="M36 28L40 44" stroke="#006b5f" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  
+  <!-- AI 分析线条 -->
+  <g stroke="#14b8a6" stroke-width="1.5" stroke-dasharray="2 1">
+    <circle cx="32" cy="32" r="25"/>
+    <circle cx="32" cy="32" r="15"/>
+    <path d="M20 32H44"/>
+    <path d="M32 20V44"/>
+  </g>
+</svg>

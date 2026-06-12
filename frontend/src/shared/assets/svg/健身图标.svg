@@ -1,0 +1,21 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆 -->
+  <circle cx="24" cy="24" r="22" fill="#f4f3f1"/>
+  
+  <!-- 哑铃图形 -->
+  <g fill="#006b5f">
+    <!-- 哑铃杆 -->
+    <rect x="18" y="22" width="12" height="4" rx="2"/>
+    
+    <!-- 哑铃片 -->
+    <circle cx="16" cy="24" r="4"/>
+    <circle cx="32" cy="24" r="4"/>
+  </g>
+  
+  <!-- 运动线条 -->
+  <g stroke="#14b8a6" stroke-width="1" stroke-dasharray="1.5 1">
+    <circle cx="24" cy="24" r="16"/>
+    <path d="M12 24H36"/>
+    <path d="M24 12V36"/>
+  </g>
+</svg>

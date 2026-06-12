@@ -1,0 +1,25 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆 -->
+  <circle cx="24" cy="24" r="22" fill="#f4f3f1"/>
+  
+  <!-- 设置图标 -->
+  <g fill="#006b5f">
+    <!-- 齿轮中心 -->
+    <circle cx="24" cy="24" r="4"/>
+    
+    <!-- 齿轮齿 -->
+    <circle cx="24" cy="12" r="3"/>
+    <circle cx="24" cy="36" r="3"/>
+    <circle cx="12" cy="24" r="3"/>
+    <circle cx="36" cy="24" r="3"/>
+    <circle cx="17" cy="17" r="2"/>
+    <circle cx="31" cy="31" r="2"/>
+    <circle cx="17" cy="31" r="2"/>
+    <circle cx="31" cy="17" r="2"/>
+  </g>
+  
+  <!-- 设置线条 -->
+  <g stroke="#14b8a6" stroke-width="1" stroke-dasharray="1.5 1">
+    <circle cx="24" cy="24" r="16"/>
+  </g>
+</svg>

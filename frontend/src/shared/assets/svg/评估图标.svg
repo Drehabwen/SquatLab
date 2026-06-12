@@ -1,0 +1,22 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆 -->
+  <circle cx="24" cy="24" r="22" fill="#f4f3f1"/>
+  
+  <!-- 评估图标 -->
+  <g fill="#006b5f">
+    <!-- 奖杯底座 -->
+    <rect x="18" y="28" width="12" height="4" rx="1"/>
+    
+    <!-- 奖杯主体 -->
+    <path d="M20 20L16 28H32L28 20V16H20V20Z"/>
+    
+    <!-- 奖杯顶部 -->
+    <circle cx="24" cy="14" r="4"/>
+  </g>
+  
+  <!-- 评估线条 -->
+  <g stroke="#14b8a6" stroke-width="1" stroke-dasharray="1.5 1">
+    <circle cx="24" cy="24" r="16"/>
+    <path d="M24 8V40"/>
+  </g>
+</svg>
