@@ -91,6 +91,13 @@ describe("CameraFeed", () => {
       await flushAsyncWork();
     });
 
+    expect(apiClient.analyzeCameraFrame).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await flushAsyncWork();
+    });
+
     expect(apiClient.analyzeCameraFrame).toHaveBeenCalledTimes(1);
     expect(vi.mocked(apiClient.analyzeCameraFrame).mock.calls[0]?.[1]).toBe("side");
 

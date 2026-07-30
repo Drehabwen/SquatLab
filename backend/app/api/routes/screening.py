@@ -8,6 +8,7 @@ from app.features.screening.importer import (
     validate_subject_row,
 )
 from app.features.screening.llm_service import LlmAnalysisService
+from app.features.screening.readiness import ReportReadinessPolicy
 from app.features.screening.repository import ScreeningRepository
 from app.features.screening.schemas import (
     BatchImportResponse,
@@ -16,7 +17,9 @@ from app.features.screening.schemas import (
     LlmAnalysisResponse,
     ProtocolAnalyzeRequest,
     ProtocolResultResponse,
+    ProtocolReviewRequest,
     ProtocolType,
+    ReportReadinessResponse,
     ScreeningSessionCreateRequest,
     ScreeningSessionCreateResponse,
     ScreeningSessionDetailResponse,
@@ -94,6 +97,11 @@ def analyze_protocol(
         per_frame_metrics=payload.per_frame_metrics,
         subject_age=subject.age if subject else None,
         subject_sex=subject.sex if subject else "unknown",
+        capture_method=payload.capture_method,
+        observer_training_verified=payload.observer_training_verified,
+        device_id=payload.device_id,
+        device_validation_recorded=payload.device_validation_recorded,
+        recorded_by=payload.recorded_by,
     )
     repository.save_protocol_result(result)
     return result
@@ -108,12 +116,45 @@ def generate_integrated_report(
     repository: ScreeningRepository = Depends(get_screening_repository),
 ) -> IntegratedReportResponse:
     repository.get_session_detail(session_id)
-    repository._enforce_all_protocols_analyzed(session_id)
     results = repository.list_protocol_results(session_id)
+    ReportReadinessPolicy().enforce(session_id=session_id, results=results)
     service = ScreeningAnalysisService()
     report = service.build_integrated_report(session_id=session_id, results=results)
     repository.save_integrated_report(report)
     return report
+
+
+@router.get(
+    "/screening/sessions/{session_id}/report-readiness",
+    response_model=ReportReadinessResponse,
+)
+def get_report_readiness(
+    session_id: str,
+    repository: ScreeningRepository = Depends(get_screening_repository),
+) -> ReportReadinessResponse:
+    repository.get_session_detail(session_id)
+    return ReportReadinessPolicy().evaluate(
+        session_id=session_id,
+        results=repository.list_protocol_results(session_id),
+    )
+
+
+@router.post(
+    "/screening/sessions/{session_id}/protocols/{protocol}/review",
+    response_model=ProtocolResultResponse,
+)
+def review_protocol(
+    session_id: str,
+    protocol: ProtocolType,
+    payload: ProtocolReviewRequest,
+    repository: ScreeningRepository = Depends(get_screening_repository),
+) -> ProtocolResultResponse:
+    return repository.review_protocol_result(
+        session_id=session_id,
+        protocol=protocol,
+        decision=payload.decision,
+        reviewed_by=payload.reviewed_by,
+    )
 
 
 @router.get(

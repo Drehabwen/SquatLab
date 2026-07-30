@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import os from "os";
+import { configDefaults } from "vitest/config";
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
@@ -38,5 +39,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
+    exclude: [...configDefaults.exclude, "frontend/**"],
   },
 });

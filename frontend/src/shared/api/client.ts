@@ -10,8 +10,10 @@ import type {
   ReportPreviewResponse,
   IntegratedReportResponse,
   ProtocolAnalyzeRequest,
+  ProtocolReviewRequest,
   ProtocolResultResponse,
   ProtocolType,
+  ReportReadinessResponse,
   SessionSummary,
   ScreeningSessionCreateRequest,
   ScreeningSessionCreateResponse,
@@ -128,6 +130,22 @@ export const apiClient = {
   analyzeProtocol: (sessionId: string, protocol: ProtocolType, payload: ProtocolAnalyzeRequest) =>
     request<ProtocolResultResponse>(
       `/api/v1/screening/sessions/${encodeURIComponent(sessionId)}/protocols/${encodeURIComponent(protocol)}/analyze`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  getReportReadiness: (sessionId: string) =>
+    request<ReportReadinessResponse>(
+      `/api/v1/screening/sessions/${encodeURIComponent(sessionId)}/report-readiness`,
+    ),
+  reviewProtocol: (
+    sessionId: string,
+    protocol: ProtocolType,
+    payload: ProtocolReviewRequest,
+  ) =>
+    request<ProtocolResultResponse>(
+      `/api/v1/screening/sessions/${encodeURIComponent(sessionId)}/protocols/${encodeURIComponent(protocol)}/review`,
       {
         method: "POST",
         body: JSON.stringify(payload),

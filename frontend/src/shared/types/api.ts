@@ -92,6 +92,34 @@ export interface ReportPreviewResponse {
 }
 
 export type ProtocolType = "static_posture" | "adams_forward_bend" | "squat";
+export type CaptureMethod =
+  | "phone_camera"
+  | "manual_observation"
+  | "validated_external_device"
+  | "imported_record";
+export type ReviewStatus = "not_required" | "pending" | "approved" | "rejected";
+export type EvidenceStatus =
+  | "usable"
+  | "missing"
+  | "recapture_required"
+  | "review_required"
+  | "conflict"
+  | "unverified_source";
+export type ReportReadinessState =
+  | "ready"
+  | "missing_evidence"
+  | "recapture_required"
+  | "review_required"
+  | "conflict_detected";
+export type WorkflowStatus =
+  | "pending_initial_screening"
+  | "initial_screening_in_progress"
+  | "pending_standard_screening"
+  | "pending_recapture"
+  | "pending_review"
+  | "pending_report"
+  | "pending_retest"
+  | "archived";
 export type SeverityLevel = "none" | "mild" | "moderate" | "severe";
 export type ScreeningStatus =
   | "in_progress"
@@ -148,6 +176,11 @@ export interface ProtocolAnalyzeRequest {
   capture_quality: CaptureQuality;
   metrics: Record<string, number | string | boolean | null>;
   per_frame_metrics?: Record<string, number | string | boolean | null>[];
+  capture_method?: CaptureMethod;
+  observer_training_verified?: boolean;
+  device_id?: string | null;
+  device_validation_recorded?: boolean;
+  recorded_by?: string | null;
 }
 
 export interface ProtocolResultResponse {
@@ -162,6 +195,12 @@ export interface ProtocolResultResponse {
   recommendations: string[];
   needs_recapture: boolean;
   needs_review: boolean;
+  capture_method: CaptureMethod;
+  observer_training_verified: boolean;
+  device_id: string | null;
+  device_validation_recorded: boolean;
+  recorded_by: string | null;
+  review_status: ReviewStatus;
   severity_grades?: Record<string, SeverityLevel> | null;
   psi_score?: number | null;
   created_at: string;
@@ -229,6 +268,39 @@ export interface ScreeningSessionSummary {
   completed_protocols: ProtocolType[];
   created_at: string;
   completed_at: string | null;
+}
+
+export interface EvidenceRequirement {
+  key: "static_posture" | "adams_forward_bend";
+  label: string;
+  required: true;
+  status: EvidenceStatus;
+  reason: string;
+  result_id: string | null;
+}
+
+export interface OptionalEvidenceSummary {
+  key: "gait_silhouette" | "squat";
+  label: string;
+  status: "available" | "not_recorded" | "unusable";
+  purpose: string;
+}
+
+export interface ReportReadinessResponse {
+  session_id: string;
+  state: ReportReadinessState;
+  workflow_status: WorkflowStatus;
+  can_generate_formal_report: boolean;
+  requirements: EvidenceRequirement[];
+  optional_evidence: OptionalEvidenceSummary[];
+  blockers: string[];
+  policy_version: string;
+  evaluated_at: string;
+}
+
+export interface ProtocolReviewRequest {
+  decision: "approved" | "rejected";
+  reviewed_by: string;
 }
 
 export interface LlmAnalysisResponse {

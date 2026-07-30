@@ -45,6 +45,9 @@ def analyze_default_protocols(client, session_id: str):
         f"/api/v1/screening/sessions/{session_id}/protocols/adams_forward_bend/analyze",
         json={
             "capture_quality": "good",
+            "capture_method": "manual_observation",
+            "observer_training_verified": True,
+            "recorded_by": "trained-observer-01",
             "metrics": {
                 "forward_bend_completed": True,
                 "stable_hold_seconds": 2.4,
@@ -126,6 +129,11 @@ def test_integrated_report_detects_multi_protocol_consistency(client):
     session = create_screening_session(client)
     session_id = session["session_id"]
     analyze_default_protocols(client, session_id)
+    for protocol in ("static_posture", "adams_forward_bend"):
+        client.post(
+            f"/api/v1/screening/sessions/{session_id}/protocols/{protocol}/review",
+            json={"decision": "approved", "reviewed_by": "reviewer-01"},
+        )
 
     response = client.post(f"/api/v1/screening/sessions/{session_id}/reports/integrated", json={})
 
@@ -151,16 +159,23 @@ def test_poor_capture_quality_routes_to_recapture(client):
 
     report_response = client.post(f"/api/v1/screening/sessions/{session_id}/reports/integrated", json={})
 
-    assert report_response.status_code == 200
-    report = report_response.json()
-    assert report["overall_risk"] == "recapture_needed"
-    assert report["next_action"] == "recapture"
+    assert report_response.status_code == 409
+    readiness = client.get(
+        f"/api/v1/screening/sessions/{session_id}/report-readiness"
+    ).json()
+    assert readiness["state"] == "recapture_required"
+    assert readiness["can_generate_formal_report"] is False
 
 
 def test_list_screening_sessions_includes_report_summary(client):
     session = create_screening_session(client)
     session_id = session["session_id"]
     analyze_default_protocols(client, session_id)
+    for protocol in ("static_posture", "adams_forward_bend"):
+        client.post(
+            f"/api/v1/screening/sessions/{session_id}/protocols/{protocol}/review",
+            json={"decision": "approved", "reviewed_by": "reviewer-01"},
+        )
     client.post(f"/api/v1/screening/sessions/{session_id}/reports/integrated", json={})
 
     response = client.get("/api/v1/screening/sessions")
@@ -175,3 +190,91 @@ def test_list_screening_sessions_includes_report_summary(client):
         "adams_forward_bend",
         "squat",
     ]
+
+
+def test_readiness_requires_static_and_qualified_adams_but_not_squat(client):
+    session = create_screening_session(client)
+    session_id = session["session_id"]
+
+    missing = client.get(
+        f"/api/v1/screening/sessions/{session_id}/report-readiness"
+    )
+    assert missing.status_code == 200
+    assert missing.json()["state"] == "missing_evidence"
+
+    static_response = client.post(
+        f"/api/v1/screening/sessions/{session_id}/protocols/static_posture/analyze",
+        json={
+            "capture_quality": "good",
+            "capture_method": "phone_camera",
+            "metrics": {
+                "shoulder_height_diff_ratio": 0,
+                "pelvis_height_diff_ratio": 0,
+                "trunk_lateral_shift_ratio": 0,
+            },
+        },
+    )
+    assert static_response.status_code == 200
+
+    phone_adams = client.post(
+        f"/api/v1/screening/sessions/{session_id}/protocols/adams_forward_bend/analyze",
+        json={
+            "capture_quality": "good",
+            "capture_method": "phone_camera",
+            "metrics": {
+                "forward_bend_completed": True,
+                "thoracic_asymmetry": "none",
+                "lumbar_asymmetry": "none",
+                "suspected_side": "unclear",
+            },
+        },
+    )
+    assert phone_adams.status_code == 200
+
+    unverified = client.get(
+        f"/api/v1/screening/sessions/{session_id}/report-readiness"
+    ).json()
+    assert unverified["state"] == "missing_evidence"
+    assert unverified["can_generate_formal_report"] is False
+    assert any("手机估算不能解锁" in blocker for blocker in unverified["blockers"])
+
+    manual_adams = client.post(
+        f"/api/v1/screening/sessions/{session_id}/protocols/adams_forward_bend/analyze",
+        json={
+            "capture_quality": "good",
+            "capture_method": "manual_observation",
+            "observer_training_verified": True,
+            "recorded_by": "trained-observer-01",
+            "metrics": {
+                "forward_bend_completed": True,
+                "thoracic_asymmetry": "none",
+                "lumbar_asymmetry": "none",
+                "suspected_side": "unclear",
+            },
+        },
+    )
+    assert manual_adams.status_code == 200
+
+    ready = client.get(
+        f"/api/v1/screening/sessions/{session_id}/report-readiness"
+    ).json()
+    assert ready["state"] == "ready"
+    assert ready["can_generate_formal_report"] is True
+    squat = next(item for item in ready["optional_evidence"] if item["key"] == "squat")
+    assert squat["status"] == "not_recorded"
+
+    report = client.post(
+        f"/api/v1/screening/sessions/{session_id}/reports/integrated",
+        json={},
+    )
+    assert report.status_code == 200
+
+
+def test_formal_report_cannot_bypass_backend_gate(client):
+    session = create_screening_session(client)
+    response = client.post(
+        f"/api/v1/screening/sessions/{session['session_id']}/reports/integrated",
+        json={},
+    )
+    assert response.status_code == 409
+    assert "正式报告门禁未通过" in response.json()["error"]["message"]

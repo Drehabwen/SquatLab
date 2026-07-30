@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
-import { BottomNavBar, TopAppBar, Icon, getDefaultNavItems, VersionUpdateChecker } from "../components/ui";
+import { Navigate, Route, Routes } from "react-router-dom";
 
 import { DashboardPage } from "../../features/dashboard/pages/DashboardPage";
 import { SubjectListPage } from "../../features/subjects/pages/SubjectListPage";
@@ -13,77 +11,73 @@ import { ProtocolCapturePage } from "../../features/protocols/pages/ProtocolCapt
 import { IntegratedReportPage } from "../../features/reports/pages/IntegratedReportPage";
 import { SettingsPage } from "../../features/settings/pages/SettingsPage";
 import { ImportPage } from "../../features/import/pages/ImportPage";
-
-const THEME_STORAGE_KEY = "app-theme";
-
-function getInitialTheme(): "light" | "dark" {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
-  if (window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
-  return "light";
-}
-
-function applyTheme(theme: "light" | "dark") {
-  document.documentElement.setAttribute("data-app-theme", theme);
-}
+import { V3FlowProvider } from "../../features/v3/V3Flow";
+import { V3Shell } from "../../features/v3/V3UI";
+import {
+  AdamsRecordPageV3,
+  CaptureHubPageV3,
+  GaitCapturePageV3,
+  ProfilePageV3,
+  ReportReadinessPageV3,
+  ReportsPageV3,
+  StandardScreeningPageV3,
+  StudentsPageV3,
+  TasksPageV3,
+  TriageResultPageV3,
+} from "../../features/v3/V3Pages";
 
 export function AppShell() {
-  const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
-
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => {
-      const next = prev === "light" ? "dark" : "light";
-      localStorage.setItem(THEME_STORAGE_KEY, next);
-      return next;
-    });
-  }, []);
-
   return (
-    <div className="app-shell">
-      <TopAppBar
-        title="青跃智衡"
-        actions={
-          <button
-            type="button"
-            className="theme-toggle-btn"
-            onClick={toggleTheme}
-            aria-label={theme === "light" ? "切换为暗色模式" : "切换为亮色模式"}
-          >
-            <Icon name={theme === "light" ? "dark_mode" : "light_mode"} />
-          </button>
-        }
-      />
-
-      <main className="app-main">
+    <V3FlowProvider>
+      <V3Shell>
         <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/subjects" element={<SubjectListPage />} />
-          <Route path="/subjects/new" element={<SubjectCreatePage />} />
-          <Route path="/subjects/:id" element={<SubjectDetailPage />} />
-          <Route path="/sessions" element={<SessionListPage />} />
-          <Route path="/sessions/new" element={<SessionCreatePage />} />
-          <Route path="/sessions/:id" element={<SessionDetailPage />} />
+          <Route path="/" element={<Navigate to="/tasks" replace />} />
+          <Route path="/tasks" element={<TasksPageV3 />} />
+          <Route path="/students" element={<StudentsPageV3 />} />
+          <Route path="/capture" element={<CaptureHubPageV3 />} />
+          <Route path="/reports" element={<ReportsPageV3 />} />
+          <Route path="/profile" element={<ProfilePageV3 />} />
           <Route
-            path="/sessions/:id/protocols/:protocol"
+            path="/sessions/:id/capture/gait-silhouette"
+            element={<GaitCapturePageV3 />}
+          />
+          <Route
+            path="/sessions/:id/triage-result"
+            element={<TriageResultPageV3 />}
+          />
+          <Route
+            path="/sessions/:id/standard-screening"
+            element={<StandardScreeningPageV3 />}
+          />
+          <Route
+            path="/sessions/:id/capture/adams"
+            element={<AdamsRecordPageV3 />}
+          />
+          <Route
+            path="/sessions/:id/report-readiness"
+            element={<ReportReadinessPageV3 />}
+          />
+
+          <Route path="/legacy" element={<DashboardPage />} />
+          <Route path="/legacy/subjects" element={<SubjectListPage />} />
+          <Route path="/legacy/subjects/new" element={<SubjectCreatePage />} />
+          <Route path="/legacy/subjects/:id" element={<SubjectDetailPage />} />
+          <Route path="/legacy/sessions" element={<SessionListPage />} />
+          <Route path="/legacy/sessions/new" element={<SessionCreatePage />} />
+          <Route path="/legacy/sessions/:id" element={<SessionDetailPage />} />
+          <Route
+            path="/legacy/sessions/:id/protocols/:protocol"
             element={<ProtocolCapturePage />}
           />
           <Route
-            path="/sessions/:id/report"
+            path="/legacy/sessions/:id/report"
             element={<IntegratedReportPage />}
           />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/import" element={<ImportPage />} />
+          <Route path="/legacy/settings" element={<SettingsPage />} />
+          <Route path="/legacy/import" element={<ImportPage />} />
+          <Route path="*" element={<Navigate to="/tasks" replace />} />
         </Routes>
-      </main>
-
-      <BottomNavBar
-        items={getDefaultNavItems()}
-      />
-      <VersionUpdateChecker />
-    </div>
+      </V3Shell>
+    </V3FlowProvider>
   );
 }

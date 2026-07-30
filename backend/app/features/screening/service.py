@@ -10,6 +10,7 @@ from .normative import (
     severity_label,
 )
 from .schemas import (
+    CaptureMethod,
     CaptureQuality,
     CrossProtocolEvidence,
     IntegratedReportResponse,
@@ -35,6 +36,11 @@ class ScreeningAnalysisService:
         subject_age: int | None = None,
         subject_sex: str = "unknown",
         subject_bmi: float | None = None,
+        capture_method: CaptureMethod = "phone_camera",
+        observer_training_verified: bool = False,
+        device_id: str | None = None,
+        device_validation_recorded: bool = False,
+        recorded_by: str | None = None,
         now: datetime | None = None,
     ) -> ProtocolResultResponse:
         timestamp = now or datetime.now(UTC)
@@ -83,6 +89,12 @@ class ScreeningAnalysisService:
             recommendations=recommendations,
             needs_recapture=needs_recapture,
             needs_review=needs_review,
+            capture_method=capture_method,
+            observer_training_verified=observer_training_verified,
+            device_id=device_id,
+            device_validation_recorded=device_validation_recorded,
+            recorded_by=recorded_by,
+            review_status="pending" if needs_review else "not_required",
             severity_grades=severity_grades,
             psi_score=psi_score,
             created_at=timestamp,

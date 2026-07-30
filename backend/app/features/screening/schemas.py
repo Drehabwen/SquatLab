@@ -5,6 +5,38 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 ProtocolType = Literal["static_posture", "adams_forward_bend", "squat"]
+CaptureMethod = Literal[
+    "phone_camera",
+    "manual_observation",
+    "validated_external_device",
+    "imported_record",
+]
+ReviewStatus = Literal["not_required", "pending", "approved", "rejected"]
+EvidenceStatus = Literal[
+    "usable",
+    "missing",
+    "recapture_required",
+    "review_required",
+    "conflict",
+    "unverified_source",
+]
+ReportReadinessState = Literal[
+    "ready",
+    "missing_evidence",
+    "recapture_required",
+    "review_required",
+    "conflict_detected",
+]
+WorkflowStatus = Literal[
+    "pending_initial_screening",
+    "initial_screening_in_progress",
+    "pending_standard_screening",
+    "pending_recapture",
+    "pending_review",
+    "pending_report",
+    "pending_retest",
+    "archived",
+]
 SeverityLevel = Literal["none", "mild", "moderate", "severe"]
 ScreeningStatus = Literal[
     "in_progress",
@@ -44,7 +76,7 @@ class SubjectResponse(SubjectCreateRequest):
 
 class ScreeningSessionCreateRequest(BaseModel):
     subject_id: str = Field(min_length=1)
-    protocols: list[ProtocolType] = Field(default_factory=lambda: ["static_posture", "adams_forward_bend", "squat"])
+    protocols: list[ProtocolType] = Field(default_factory=lambda: ["static_posture", "adams_forward_bend"])
 
 
 class ProtocolProgress(BaseModel):
@@ -64,6 +96,11 @@ class ProtocolAnalyzeRequest(BaseModel):
     capture_quality: CaptureQuality
     metrics: dict[str, Any] = Field(default_factory=dict)
     per_frame_metrics: list[dict[str, Any]] | None = Field(default=None)
+    capture_method: CaptureMethod = "phone_camera"
+    observer_training_verified: bool = False
+    device_id: str | None = Field(default=None, max_length=120)
+    device_validation_recorded: bool = False
+    recorded_by: str | None = Field(default=None, max_length=120)
 
 
 class ProtocolResultResponse(BaseModel):
@@ -78,6 +115,12 @@ class ProtocolResultResponse(BaseModel):
     recommendations: list[str]
     needs_recapture: bool
     needs_review: bool
+    capture_method: CaptureMethod = "phone_camera"
+    observer_training_verified: bool = False
+    device_id: str | None = None
+    device_validation_recorded: bool = False
+    recorded_by: str | None = None
+    review_status: ReviewStatus = "not_required"
     created_at: datetime
     updated_at: datetime
     # Static posture enriched fields (null for other protocols)
@@ -132,6 +175,39 @@ class ScreeningSessionSummary(BaseModel):
     completed_protocols: list[ProtocolType]
     created_at: datetime
     completed_at: datetime | None = None
+
+
+class EvidenceRequirement(BaseModel):
+    key: Literal["static_posture", "adams_forward_bend"]
+    label: str
+    required: bool = True
+    status: EvidenceStatus
+    reason: str
+    result_id: str | None = None
+
+
+class OptionalEvidenceSummary(BaseModel):
+    key: Literal["gait_silhouette", "squat"]
+    label: str
+    status: Literal["available", "not_recorded", "unusable"]
+    purpose: str
+
+
+class ReportReadinessResponse(BaseModel):
+    session_id: str
+    state: ReportReadinessState
+    workflow_status: WorkflowStatus
+    can_generate_formal_report: bool
+    requirements: list[EvidenceRequirement]
+    optional_evidence: list[OptionalEvidenceSummary]
+    blockers: list[str]
+    policy_version: str
+    evaluated_at: datetime
+
+
+class ProtocolReviewRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reviewed_by: str = Field(min_length=1, max_length=120)
 
 
 def build_subject_id() -> str:

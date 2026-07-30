@@ -1,31 +1,68 @@
-# 联合筛查 API Contract 草案
+# RehabScreenLab V2 联合筛查 API Contract
 
-## 1. 目标
+## 1. 目标与实施状态
 
-本文定义下一阶段“静态体态 + Adams 前屈 + 深蹲动作”联合筛查所需的前后端数据契约。它是 vNext 设计草案，不要求一次性替换当前深蹲接口。
+本文定义“步态剪影一级分诊 → 静态体态与人工 Adams 标准筛查 → 报告/复核/复测”的 vNext 前后端契约。
 
-设计原则：
+当前实现已有：
 
-- 以一次 `screening_session` 作为业务主对象。
-- 每个采集协议输出统一的 `protocol_result`。
-- 报告只消费结构化协议结果，不直接依赖前端页面状态。
-- 采集质量不足时进入复采状态，不强行给出结论。
-- 所有医学相关表达使用“筛查提示、建议复核、建议进一步评估”，不使用诊断语言。
+- `static_posture`；
+- `adams_forward_bend`；
+- `squat`；
+- 基础 `screening_session`、`protocol_result` 和综合报告；
+- 证据采集来源、受训观察者、外部设备验证和复核状态；
+- 后端正式报告门禁与 `report-readiness` 查询；
+- 必需证据复核接口；
+- 深蹲缺失不阻断正式报告。
 
-## 2. 枚举定义
+待实现：
+
+- `gait_silhouette`；
+- 两级筛查模式；
+- 自动质控详情；
+- 步态剪影证据账本与人工升级记录；
+- 新工作流状态的数据库持久化。
+
+迁移期间旧接口继续可用，不允许一次性破坏现有深蹲和三协议会话。
+
+## 2. 设计原则
+
+- 以 `screening_session` 为业务主对象。
+- 协议结果统一结构，协议职责不同。
+- 采集质量不足时先复采，不输出风险结论。
+- 一级剪影只产生分诊结果，不直接产生正式报告。
+- 手机端 Adams 只做引导、证据留存和结构化录入，不自动输出严重度或 ATR。
+- 深蹲是可选动作证据，不阻塞脊柱筛查报告。
+- 缺失证据必须进入状态和任务，不得默认为正常。
+- 所有医学文案使用筛查、复核和进一步评估措辞。
+
+## 3. 枚举
 
 ```ts
+type ScreeningMode =
+  | "rapid_triage"
+  | "standard_screening"
+  | "movement_followup";
+
 type ProtocolType =
+  | "gait_silhouette"
   | "static_posture"
   | "adams_forward_bend"
   | "squat";
 
+type ProtocolRole =
+  | "initial_triage"
+  | "standard_screening"
+  | "optional_support";
+
 type ScreeningStatus =
-  | "in_progress"
-  | "pending_report"
-  | "completed"
+  | "pending_initial_screening"
+  | "initial_screening_in_progress"
+  | "pending_standard_screening"
   | "pending_recapture"
   | "pending_review"
+  | "pending_report"
+  | "pending_retest"
   | "archived";
 
 type ProtocolStatus =
@@ -34,43 +71,76 @@ type ProtocolStatus =
   | "captured"
   | "analyzed"
   | "needs_recapture"
-  | "needs_review";
+  | "needs_review"
+  | "manually_recorded";
 
 type CaptureQuality = "poor" | "acceptable" | "good";
 
-type OverallRisk =
+type RiskLevel =
   | "low"
   | "attention"
   | "review_required"
   | "recapture_needed";
 
 type NextAction =
-  | "pass"
-  | "retest_later"
+  | "pass_initial_triage"
+  | "start_standard_screening"
   | "recapture"
   | "manual_review"
-  | "professional_evaluation";
+  | "professional_evaluation"
+  | "generate_formal_report"
+  | "schedule_retest"
+  | "archive";
 
 type Direction = "left" | "right" | "forward" | "unclear";
-
 type Confidence = "low" | "medium" | "high";
 ```
 
-## 3. 通用响应结构
+## 4. 通用对象
 
-### 3.1 ProtocolResult
+### 4.1 QualityCheck
+
+```ts
+type QualityCheck = {
+  name: string;
+  passed: boolean;
+  value?: number | string | boolean;
+  threshold?: number | string;
+  message?: string;
+};
+
+type QualityDetails = {
+  grade: CaptureQuality;
+  passed: boolean;
+  checks: QualityCheck[];
+  blocking_reasons: string[];
+};
+```
+
+兼容字段 `capture_quality` 继续保留；新代码以 `quality_details` 作为判定依据。
+
+### 4.2 ProtocolResult
 
 ```ts
 type ProtocolResult = {
   result_id: string;
   session_id: string;
   protocol: ProtocolType;
+  protocol_role: ProtocolRole;
   status: ProtocolStatus;
   capture_quality: CaptureQuality;
-  metrics: Record<string, number | string | boolean | null>;
+  quality_details?: QualityDetails;
+  metrics: Record<string, unknown>;
   findings: string[];
   risk_flags: string[];
   recommendations: string[];
+  confidence?: Confidence;
+  model_version?: string;
+  evidence_source:
+    | "mobile_algorithm"
+    | "trained_observer"
+    | "validated_device"
+    | "combined";
   needs_recapture: boolean;
   needs_review: boolean;
   created_at: string;
@@ -78,7 +148,20 @@ type ProtocolResult = {
 };
 ```
 
-### 3.2 CrossProtocolEvidence
+### 4.3 DataCompleteness
+
+```ts
+type DataCompleteness = {
+  required_protocols: ProtocolType[];
+  completed_protocols: ProtocolType[];
+  usable_protocols: ProtocolType[];
+  missing_protocols: ProtocolType[];
+  blocking_reasons: string[];
+  formal_report_ready: boolean;
+};
+```
+
+### 4.4 CrossProtocolEvidence
 
 ```ts
 type CrossProtocolEvidence = {
@@ -87,18 +170,25 @@ type CrossProtocolEvidence = {
   direction?: Direction;
   evidence: string[];
   confidence: Confidence;
+  conflicts?: string[];
 };
 ```
 
-### 3.3 IntegratedReport
+### 4.5 IntegratedReport
 
 ```ts
 type IntegratedReport = {
   report_id: string;
   session_id: string;
-  title: string;
-  overall_risk: OverallRisk;
-  consistency_level: "none" | "single_protocol" | "multi_protocol_consistent";
+  report_type: "initial_triage_summary" | "formal_screening_report";
+  report_schema_version: "screening_workflow_v2";
+  risk_level: RiskLevel;
+  consistency_level:
+    | "none"
+    | "single_protocol"
+    | "multi_protocol_consistent"
+    | "conflicting";
+  data_completeness: DataCompleteness;
   main_patterns: string[];
   cross_protocol_evidence: CrossProtocolEvidence[];
   next_action: NextAction;
@@ -109,9 +199,9 @@ type IntegratedReport = {
 };
 ```
 
-## 4. 受试者与筛查任务
+## 5. 对象与任务
 
-### 4.1 Create Subject
+### 5.1 Create Subject
 
 `POST /api/v1/subjects`
 
@@ -125,83 +215,154 @@ type IntegratedReport = {
 }
 ```
 
-Response:
-
-```json
-{
-  "subject_id": "subj-8f0c1d9a42",
-  "display_name": "学生001",
-  "sex": "female",
-  "age": 12,
-  "height_cm": 152,
-  "notes": "",
-  "created_at": "2026-04-29T12:00:00+00:00"
-}
-```
-
-### 4.2 Create Screening Session
+### 5.2 Create Rapid Triage Session
 
 `POST /api/v1/screening/sessions`
 
 ```json
 {
   "subject_id": "subj-8f0c1d9a42",
-  "protocols": ["static_posture", "adams_forward_bend", "squat"]
+  "mode": "rapid_triage"
 }
 ```
 
-Response:
+服务端派生：
 
 ```json
 {
   "session_id": "screen-2b8a67e91f",
-  "subject_id": "subj-8f0c1d9a42",
-  "status": "in_progress",
+  "mode": "rapid_triage",
+  "status": "pending_initial_screening",
   "protocols": [
     {
-      "protocol": "static_posture",
-      "status": "not_started"
-    },
-    {
-      "protocol": "adams_forward_bend",
-      "status": "not_started"
-    },
-    {
-      "protocol": "squat",
+      "protocol": "gait_silhouette",
+      "protocol_role": "initial_triage",
+      "required": true,
       "status": "not_started"
     }
   ],
-  "created_at": "2026-04-29T12:01:00+00:00"
+  "next_action": "start_initial_screening"
 }
 ```
 
-### 4.3 Get Screening Session
+### 5.3 Upgrade To Standard Screening
 
-`GET /api/v1/screening/sessions/{session_id}`
-
-Response:
+`POST /api/v1/screening/sessions/{session_id}/upgrade`
 
 ```json
 {
-  "session_id": "screen-2b8a67e91f",
-  "subject_id": "subj-8f0c1d9a42",
-  "status": "pending_report",
-  "protocol_results": [],
-  "integrated_report": null,
-  "created_at": "2026-04-29T12:01:00+00:00",
-  "completed_at": null
+  "reason": "silhouette_attention",
+  "requested_by": "system"
 }
 ```
 
-## 5. 协议分析接口
+升级后新增：
 
-第一版可以让三个协议分别提交结构化指标。后续再把图像/视频分析接进来。
+- `static_posture`，必需；
+- `adams_forward_bend`，必需人工记录；
+- `squat`，不自动新增；由专业人员按需选择。
 
-### 5.1 Static Posture Analyze
+### 5.4 Add Optional Protocol
+
+`POST /api/v1/screening/sessions/{session_id}/protocols`
+
+```json
+{
+  "protocol": "squat",
+  "reason": "movement_control_followup"
+}
+```
+
+## 6. 步态剪影协议
+
+### 6.1 Register Capture
+
+`POST /api/v1/screening/sessions/{session_id}/protocols/gait-silhouette/captures`
+
+`multipart/form-data`：
+
+- `video`：临时原始视频，可按隐私策略即时删除；
+- `capture_metadata`：JSON；
+
+```json
+{
+  "duration_seconds": 6.4,
+  "camera_facing": "rear",
+  "preview_mirrored": true,
+  "device_model": "device-id",
+  "retention_policy": "derived_only"
+}
+```
+
+Response：
+
+```json
+{
+  "capture_id": "cap-gait-001",
+  "status": "captured",
+  "raw_asset_retained": false
+}
+```
+
+### 6.2 Analyze Gait Silhouette
+
+`POST /api/v1/screening/sessions/{session_id}/protocols/gait-silhouette/analyze`
+
+```json
+{
+  "capture_id": "cap-gait-001"
+}
+```
+
+Response：`ProtocolResult`
+
+```json
+{
+  "result_id": "res-gait-001",
+  "session_id": "screen-2b8a67e91f",
+  "protocol": "gait_silhouette",
+  "protocol_role": "initial_triage",
+  "status": "analyzed",
+  "capture_quality": "good",
+  "quality_details": {
+    "grade": "good",
+    "passed": true,
+    "checks": [
+      {"name": "full_body_visible", "passed": true},
+      {"name": "mirror_state_known", "passed": true},
+      {"name": "valid_frame_ratio", "passed": true, "value": 0.91}
+    ],
+    "blocking_reasons": []
+  },
+  "metrics": {
+    "segment_count": 24,
+    "feature_schema_version": "silhouette_lr_mean_v1",
+    "screening_score": 0.41,
+    "out_of_distribution": false,
+    "directional_regions": [
+      {"region": "trunk", "direction": "right", "magnitude": 0.04}
+    ]
+  },
+  "findings": ["全身轮廓存在轻度方向性偏移信号"],
+  "risk_flags": ["silhouette_directional_shift"],
+  "recommendations": ["建议进入标准筛查进一步确认。"],
+  "confidence": "medium",
+  "model_version": "silhouette-logreg-v1",
+  "evidence_source": "mobile_algorithm",
+  "needs_recapture": false,
+  "needs_review": false,
+  "created_at": "2026-07-29T12:03:00+08:00",
+  "updated_at": "2026-07-29T12:03:00+08:00"
+}
+```
+
+模型内部特征向量不要求在常规响应中返回；如需审计，使用受控调试接口或内部特征存储。
+
+## 7. 静态体态协议
 
 `POST /api/v1/screening/sessions/{session_id}/protocols/static-posture/analyze`
 
-Request:
+兼容当前 `metrics` 提交形式。方向性指标必须同时记录幅度和方向。
 
 ```json
 {
@@ -210,251 +371,240 @@ Request:
     "shoulder_height_diff_ratio": 0.04,
     "pelvis_height_diff_ratio": 0.03,
     "trunk_lateral_shift_ratio": 0.05,
-    "forward_head_ratio": 0.08,
-    "knee_alignment": "neutral",
     "suspected_direction": "right"
   }
 }
 ```
 
-Response: `ProtocolResult`
+`evidence_source` 可为 `mobile_algorithm` 或 `combined`。
+
+## 8. Adams 人工记录协议
+
+### 8.1 设计边界
+
+手机端可以：
+
+- 引导动作；
+- 检查是否完成前屈和稳定停留；
+- 保存经授权的证据图像或视频；
+- 提供结构化录入表单。
+
+手机端不可以：
+
+- 自动给出胸段/腰段严重度；
+- 从二维轮廓或关键点自动推算 ATR；
+- 输出 Cobb 角或诊断。
+
+### 8.2 Submit Observer Record
+
+`POST /api/v1/screening/sessions/{session_id}/protocols/adams-forward-bend/records`
 
 ```json
 {
-  "result_id": "res-static-001",
-  "session_id": "screen-2b8a67e91f",
-  "protocol": "static_posture",
-  "status": "analyzed",
-  "capture_quality": "good",
-  "metrics": {
-    "shoulder_height_diff_ratio": 0.04,
-    "pelvis_height_diff_ratio": 0.03,
-    "trunk_lateral_shift_ratio": 0.05,
-    "forward_head_ratio": 0.08,
-    "knee_alignment": "neutral",
-    "suspected_direction": "right"
+  "capture_id": "cap-adams-001",
+  "observer": {
+    "observer_id": "staff-001",
+    "training_level": "trained_screening_operator"
   },
-  "findings": ["右肩偏高", "躯干轻度右偏"],
-  "risk_flags": ["static_trunk_asymmetry_right"],
-  "recommendations": ["建议结合前屈筛查和动态动作结果进行综合判断。"],
-  "needs_recapture": false,
-  "needs_review": false,
-  "created_at": "2026-04-29T12:03:00+00:00",
-  "updated_at": "2026-04-29T12:03:00+00:00"
+  "observation": {
+    "forward_bend_completed": true,
+    "stable_hold_seconds": 2.5,
+    "thoracic_observation": "mild",
+    "lumbar_observation": "none",
+    "suspected_side": "right",
+    "notes": ""
+  },
+  "device_measurement": null
 }
 ```
 
-### 5.2 Adams Forward Bend Analyze
-
-`POST /api/v1/screening/sessions/{session_id}/protocols/adams-forward-bend/analyze`
-
-Request:
+如使用经验证设备：
 
 ```json
 {
-  "capture_quality": "good",
-  "metrics": {
-    "forward_bend_completed": true,
-    "stable_hold_seconds": 2.4,
-    "thoracic_asymmetry": "moderate",
-    "lumbar_asymmetry": "mild",
-    "suspected_side": "right",
-    "trunk_rotation_sign": true,
-    "confidence": "medium"
+  "device_measurement": {
+    "measurement_type": "atr",
+    "value_degrees": 6.0,
+    "region": "thoracic",
+    "device_name": "scoliometer",
+    "entered_by": "staff-001",
+    "measured_at": "2026-07-29T12:06:00+08:00"
   }
 }
 ```
 
-Response: `ProtocolResult`
+Response：`ProtocolResult`
 
 ```json
 {
-  "result_id": "res-adams-001",
-  "session_id": "screen-2b8a67e91f",
   "protocol": "adams_forward_bend",
-  "status": "needs_review",
+  "protocol_role": "standard_screening",
+  "status": "manually_recorded",
   "capture_quality": "good",
   "metrics": {
-    "forward_bend_completed": true,
-    "stable_hold_seconds": 2.4,
-    "thoracic_asymmetry": "moderate",
-    "lumbar_asymmetry": "mild",
+    "thoracic_observation": "mild",
+    "lumbar_observation": "none",
     "suspected_side": "right",
-    "trunk_rotation_sign": true,
-    "confidence": "medium"
+    "atr_degrees": null
   },
-  "findings": ["胸段右侧不对称较明显", "腰段右侧轻度不对称"],
-  "risk_flags": ["adams_thoracic_asymmetry_right"],
-  "recommendations": ["建议由专业人员复核本次前屈筛查证据。"],
+  "findings": ["受训操作员记录胸段右侧轻度不对称"],
+  "risk_flags": ["observer_adams_thoracic_right"],
+  "confidence": "medium",
+  "evidence_source": "trained_observer",
   "needs_recapture": false,
-  "needs_review": true,
-  "created_at": "2026-04-29T12:05:00+00:00",
-  "updated_at": "2026-04-29T12:05:00+00:00"
+  "needs_review": true
 }
 ```
 
-### 5.3 Squat Analyze
+## 9. 深蹲可选协议
 
-`POST /api/v1/screening/sessions/{session_id}/protocols/squat/analyze`
+现有接口继续保留：
 
-Request:
+- `POST /api/v1/squat/assessments`；
+- `GET /api/v1/squat/sessions`；
+- `POST /api/v1/squat/reports/preview`。
+
+映射到联合筛查时：
 
 ```json
 {
-  "capture_quality": "acceptable",
-  "metrics": {
-    "squat_count": 6,
-    "knee_sway_ratio": 0.08,
-    "knee_valgus_angle": 9,
-    "center_deviation_ratio": 0.06,
-    "left_right_symmetry": 0.9,
-    "linkage_smoothness": 0.82,
-    "squat_depth_ratio": 0.78,
-    "dynamic_shift_direction": "right"
+  "protocol": "squat",
+  "protocol_role": "optional_support",
+  "required": false
+}
+```
+
+规则：
+
+- 未完成深蹲不影响 `formal_report_ready`；
+- 深蹲异常不能单独触发脊柱专业评估；
+- 深蹲结果只进入动作控制、康复随访和跨协议辅助证据。
+
+## 10. 报告条件
+
+### 10.1 Get Formal Report Conditions
+
+当前兼容实现：
+
+`GET /api/v1/screening/sessions/{session_id}/report-readiness`
+
+```json
+{
+  "session_id": "screen-001",
+  "state": "missing_evidence",
+  "workflow_status": "pending_standard_screening",
+  "can_generate_formal_report": false,
+  "requirements": [
+    {
+      "key": "static_posture",
+      "label": "静态体态",
+      "required": true,
+      "status": "usable",
+      "reason": "静态体态证据可用于正式报告。"
+    },
+    {
+      "key": "adams_forward_bend",
+      "label": "Adams 人工观察",
+      "required": true,
+      "status": "missing",
+      "reason": "缺少 Adams 人工观察证据。"
+    }
+  ],
+  "optional_evidence": [
+    {
+      "key": "squat",
+      "label": "深蹲",
+      "status": "not_recorded",
+      "purpose": "可选动作证据；缺失或失败不阻断正式筛查报告。"
+    }
+  ],
+  "blockers": ["缺少 Adams 人工观察证据。"],
+  "policy_version": "formal-report-readiness/1.0",
+  "evaluated_at": "2026-07-30T02:00:00Z"
+}
+```
+
+当前门禁只以静态体态和合格来源的 Adams 为正式报告必需证据。剪影属于一级分流证据；后续接入证据账本后，剪影不可用必须记录人工升级依据，不得静默跳过。
+
+## 11. 报告接口
+
+### 11.1 Generate Initial Triage Summary
+
+`POST /api/v1/screening/sessions/{session_id}/reports/initial-triage`
+
+只消费一级剪影结果，输出：
+
+```json
+{
+  "report_type": "initial_triage_summary",
+  "risk_level": "attention",
+  "next_action": "start_standard_screening",
+  "data_completeness": {
+    "formal_report_ready": false
   }
 }
 ```
 
-Response: `ProtocolResult`
+### 11.2 Generate Formal Screening Report
 
-```json
-{
-  "result_id": "res-squat-001",
-  "session_id": "screen-2b8a67e91f",
-  "protocol": "squat",
-  "status": "analyzed",
-  "capture_quality": "acceptable",
-  "metrics": {
-    "squat_count": 6,
-    "knee_sway_ratio": 0.08,
-    "knee_valgus_angle": 9,
-    "center_deviation_ratio": 0.06,
-    "left_right_symmetry": 0.9,
-    "linkage_smoothness": 0.82,
-    "squat_depth_ratio": 0.78,
-    "dynamic_shift_direction": "right"
-  },
-  "findings": ["动作整体可用，存在轻度右侧重心偏移"],
-  "risk_flags": ["dynamic_weight_shift_right"],
-  "recommendations": ["建议结合静态体态结果观察是否存在同方向偏移。"],
-  "needs_recapture": false,
-  "needs_review": false,
-  "created_at": "2026-04-29T12:08:00+00:00",
-  "updated_at": "2026-04-29T12:08:00+00:00"
-}
-```
-
-## 6. 综合报告接口
-
-### 6.1 Generate Integrated Report
+当前兼容实现：
 
 `POST /api/v1/screening/sessions/{session_id}/reports/integrated`
 
-Request:
+前置条件：
 
-```json
-{}
-```
+- `formal_report_ready = true`；
+- 必需人工复核已完成；
+- 不存在未处理冲突。
 
-Response: `IntegratedReport`
+否则返回 `409 FormalReportConditionsNotMet`：
 
 ```json
 {
-  "report_id": "report-1f82d4a9",
-  "session_id": "screen-2b8a67e91f",
-  "title": "姿态与动作联合筛查报告",
-  "overall_risk": "review_required",
-  "consistency_level": "multi_protocol_consistent",
-  "main_patterns": [
-    "trunk_asymmetry_right",
-    "dynamic_weight_shift_right"
-  ],
-  "cross_protocol_evidence": [
-    {
-      "pattern": "trunk_asymmetry_right",
-      "protocols": ["static_posture", "adams_forward_bend", "squat"],
-      "direction": "right",
-      "evidence": [
-        "静态体态观察到躯干轻度右偏",
-        "Adams 前屈观察到胸段右侧不对称较明显",
-        "深蹲动作观察到轻度右侧重心偏移"
-      ],
-      "confidence": "medium"
-    }
-  ],
-  "next_action": "manual_review",
-  "summary": "右侧相关不对称在静态体态、Adams 前屈和深蹲动作中均有体现，建议专业人员复核。",
-  "recommendations": [
-    "建议进行人工复核，确认本次筛查证据是否稳定。",
-    "如复核仍提示明显风险，建议进一步专业评估。"
-  ],
-  "disclaimer": "本报告用于姿态与动作风险筛查参考，不作为医学诊断依据。如筛查结果提示明显风险，建议由专业人员进一步评估。",
-  "created_at": "2026-04-29T12:10:00+00:00"
+  "error": "formal_report_conditions_not_met",
+  "blocking_reasons": ["adams_observer_record_missing"],
+  "next_action": "manual_review"
 }
 ```
 
-### 6.2 Get Integrated Report
+## 12. 兼容迁移
 
-`GET /api/v1/screening/sessions/{session_id}/reports/integrated`
+### 12.1 旧状态映射
 
-返回已生成的综合报告。如果不存在，返回 `404 NotFoundError`。
+| Legacy | V2 |
+| --- | --- |
+| `in_progress` | 根据协议进度映射到初筛或标准筛查中 |
+| `pending_recapture` | `pending_recapture` |
+| `pending_review` | `pending_review` |
+| `pending_report` | `pending_report` |
+| `completed` | `pending_retest` 或 `archived` |
 
-## 7. 历史记录接口
+### 12.2 旧报告
 
-### 7.1 List Screening Sessions
+- 旧三协议报告标记 `legacy_joint_screening_v1`；
+- 不反向要求旧报告补做剪影；
+- 新会话默认使用 `screening_workflow_v2`；
+- 旧深蹲快捷评估继续作为独立 Movement Follow-up。
 
-`GET /api/v1/screening/sessions`
+## 13. 错误与审计
 
-Query:
+必须记录：
 
-```text
-subject_id?: string
-status?: ScreeningStatus
-limit?: number
-```
+- 模型版本和特征 schema；
+- 采集设备和镜像状态；
+- 质量检查结果；
+- 人工 Adams 录入者；
+- ATR 测量来源；
+- 人工覆盖或升级原因；
+- 报告生成者与审核者；
+- 状态转换时间线。
 
-Response:
+关键错误：
 
-```json
-[
-  {
-    "session_id": "screen-2b8a67e91f",
-    "subject_id": "subj-8f0c1d9a42",
-    "subject_display_name": "学生001",
-    "status": "completed",
-    "overall_risk": "review_required",
-    "next_action": "manual_review",
-    "completed_protocols": ["static_posture", "adams_forward_bend", "squat"],
-    "created_at": "2026-04-29T12:01:00+00:00",
-    "completed_at": "2026-04-29T12:10:00+00:00"
-  }
-]
-```
-
-## 8. 兼容当前深蹲接口
-
-当前接口可以保留：
-
-- `POST /api/v1/squat/assessments`
-- `GET /api/v1/squat/sessions`
-- `POST /api/v1/squat/reports/preview`
-
-迁移策略：
-
-1. 保持现有深蹲页面可用。
-2. 新增联合筛查接口。
-3. 将现有深蹲结果在服务端映射为 `ProtocolResult(protocol="squat")`。
-4. 前端历史记录逐步从 `squat_sessions` 迁移到 `screening_sessions`。
-5. 旧深蹲接口可作为快捷评估入口长期保留。
-
-## 9. 第一阶段实现建议
-
-优先实现后端纯结构闭环，不急于把所有图像算法一次接入：
-
-1. 新增 Pydantic schemas。
-2. 新增 SQLite 表：`subjects`、`screening_sessions`、`protocol_results`、`integrated_reports`。
-3. 新增 `screening` 路由。
-4. 把深蹲评分服务包装成 `ProtocolResult`。
-5. 静态体态和 Adams 先接受结构化 mock metrics。
-6. 实现综合报告规则引擎。
-7. 前端增加联合筛查工作台和报告预览。
+- `CaptureQualityInsufficient`；
+- `UnknownMirrorState`；
+- `OutOfDistributionInput`；
+- `ObserverRecordMissing`；
+- `ValidatedDeviceSourceMissing`；
+- `FormalReportConditionsNotMet`；
+- `UnresolvedEvidenceConflict`。

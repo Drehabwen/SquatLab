@@ -1,1 +1,0 @@
-# Squat feature package.

@@ -1,29 +1,35 @@
 # Task Plan
 
 ## Objective
-- Implement the first backend structure loop for joint screening protocols and integrated reports.
+- Harden the V3 screening architecture by making workflow state, evidence completeness, and formal-report readiness explicit backend domain rules, then connect the V3 frontend to the shared contract without deleting recoverable legacy code.
 
 ## Constraints
-- Keep the current React + FastAPI API contract unchanged.
-- Add vNext screening APIs alongside existing squat APIs.
-- Start with structured protocol metrics; do not attempt full image algorithms in this step.
-- Keep report wording as screening guidance, not diagnosis.
+- Preserve all existing user documentation, V3 UI work, and the currently runnable frontend.
+- Treat `frontend/frontend` and `backend/backend` as historical duplicates until build/import references and content differences are proven.
+- Gait/silhouette is triage evidence only; static posture plus trained-observer Adams evidence gates a formal report.
+- Phone-derived Adams/ATR must not satisfy formal-report conditions; squat remains optional specialty evidence.
+- Backend policy is authoritative; frontend readiness is a projection of that policy.
 
 ## Steps
-- [completed] Inspect backend persistence, routing, and current tests.
-- [completed] Add screening schemas, repository, rules engine, and routes.
-- [completed] Add tests for session creation, protocol results, integrated reports, and recapture/review rules.
-- [completed] Run backend and frontend verification and record outcome.
+- [completed] Audit duplicate trees, active build roots, backend schema, and current V3 mock state.
+- [completed] Add the shared workflow/evidence/report-readiness domain contract and policy engine.
+- [completed] Expose backend workflow/readiness endpoints with persistence-compatible behavior and tests.
+- [completed] Add the shared frontend readiness/provenance contract and API boundary.
+- [completed] Remove duplicate roots, archive legacy materials, run regression checks, and record residual risks.
 
 ## Verification
-- `npm run build` in `frontend`
-- `npm run test -- --run` in `frontend`
-- `python -m pytest` in `backend`
+- Run the backend test suite, including policy and API tests for missing, unusable, unverified-source, conflict, review, and ready states.
+- Run `npm run check`, `npm run test -- --run`, and `npm run build` in the active frontend.
+- Confirm the formal-report endpoint rejects an unready session even if the client attempts to bypass the UI.
+- Confirm squat absence does not block a formal report and phone-derived Adams/ATR does not unlock one.
 
 ## Outcome
-- Added backend vNext screening tables: `subjects`, `screening_sessions`, `protocol_results`, and `integrated_reports`.
-- Added `features/screening` schemas, repository, and rules service for static posture, Adams forward-bend, squat protocol results, and integrated reports.
-- Added `/api/v1/subjects` and `/api/v1/screening/...` routes while preserving existing squat routes.
-- Added frontend API types and client methods for screening sessions, protocol analysis, and integrated reports.
-- Added backend tests covering screening session creation, protocol analysis, integrated report generation, recapture routing, and history summaries.
-- Verified with `python -m pytest`, `npm run build`, and `npm run test -- --run`.
+- Removed the tracked and untracked duplicate roots `frontend/frontend`, `backend/backend`, `docs/docs`, and `ui-design/ui-design` after proving they contained no unique files.
+- Archived old SquatLab V1 documentation, deliverables, generation tooling, V2 high-fidelity assets, and Stitch explorations outside the active development roots.
+- Replaced the outdated root README with a single active-project map and added archive/UI indexes.
+- Added evidence provenance fields for capture method, trained-observer verification, validated-device identity, recorder, and review status.
+- Added backend formal-report readiness policy and endpoints. Static posture and qualified Adams evidence are required; phone-derived Adams cannot unlock a report; squat is optional.
+- Added a backend review transition and made integrated-report generation enforce readiness server-side.
+- Added an Alembic migration for evidence provenance and matching frontend types/API methods.
+- Passed 50 backend tests, frontend TypeScript checking, 25 frontend tests, and the Vite production build.
+- Full-repository Ruff still reports pre-existing formatting and unused-variable findings outside this change; record this as a separate cleanup task rather than mixing it into the workflow refactor.

@@ -9,6 +9,7 @@ backend/venv/
 # ── Build outputs ──
 **/dist/
 **/.vite/
+frontend/output/
 *.egg-info/
 **/build/
 **/local.properties
@@ -24,6 +25,7 @@ backend/venv/
 .claude/
 .claw/
 .codex-runtime/
+.playwright-cli/
 .runtime/
 .trae/
 .vscode/

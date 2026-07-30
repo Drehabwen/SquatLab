@@ -223,9 +223,12 @@ class ScreeningRepository:
                 INSERT INTO protocol_results (
                     result_id, session_id, protocol_type, status, capture_quality,
                     metrics, findings, risk_flags, recommendations,
-                    needs_recapture, needs_review, created_at, updated_at
+                    needs_recapture, needs_review, capture_method,
+                    observer_training_verified, device_id,
+                    device_validation_recorded, recorded_by, review_status,
+                    created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id, protocol_type) DO UPDATE SET
                     status = excluded.status,
                     capture_quality = excluded.capture_quality,
@@ -235,6 +238,12 @@ class ScreeningRepository:
                     recommendations = excluded.recommendations,
                     needs_recapture = excluded.needs_recapture,
                     needs_review = excluded.needs_review,
+                    capture_method = excluded.capture_method,
+                    observer_training_verified = excluded.observer_training_verified,
+                    device_id = excluded.device_id,
+                    device_validation_recorded = excluded.device_validation_recorded,
+                    recorded_by = excluded.recorded_by,
+                    review_status = excluded.review_status,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -249,6 +258,12 @@ class ScreeningRepository:
                     json.dumps(result.recommendations, ensure_ascii=False),
                     int(result.needs_recapture),
                     int(result.needs_review),
+                    result.capture_method,
+                    int(result.observer_training_verified),
+                    result.device_id,
+                    int(result.device_validation_recorded),
+                    result.recorded_by,
+                    result.review_status,
                     result.created_at.isoformat(),
                     result.updated_at.isoformat(),
                 ),
@@ -261,7 +276,10 @@ class ScreeningRepository:
                 """
                 SELECT result_id, session_id, protocol_type, status, capture_quality,
                        metrics, findings, risk_flags, recommendations,
-                       needs_recapture, needs_review, created_at, updated_at
+                       needs_recapture, needs_review, capture_method,
+                       observer_training_verified, device_id,
+                       device_validation_recorded, recorded_by, review_status,
+                       created_at, updated_at
                 FROM protocol_results
                 WHERE session_id = ?
                 ORDER BY created_at ASC
@@ -269,6 +287,40 @@ class ScreeningRepository:
                 (session_id,),
             ).fetchall()
         return [self._protocol_result_from_row(row) for row in rows]
+
+    def review_protocol_result(
+        self,
+        *,
+        session_id: str,
+        protocol: ProtocolType,
+        decision: str,
+        reviewed_by: str,
+    ) -> ProtocolResultResponse:
+        self._get_session_row(session_id)
+        with self.db.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE protocol_results
+                SET review_status = ?, recorded_by = ?, updated_at = ?
+                WHERE session_id = ? AND protocol_type = ?
+                """,
+                (
+                    decision,
+                    reviewed_by,
+                    datetime.now(UTC).isoformat(),
+                    session_id,
+                    protocol,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(
+                    f"Protocol result not found: {session_id}/{protocol}"
+                )
+        return next(
+            result
+            for result in self.list_protocol_results(session_id)
+            if result.protocol == protocol
+        )
 
     def save_integrated_report(self, report: IntegratedReportResponse) -> None:
         with self.db.connect() as connection:
@@ -430,6 +482,12 @@ class ScreeningRepository:
             recommendations=json.loads(row[8]),
             needs_recapture=bool(row[9]),
             needs_review=bool(row[10]),
-            created_at=datetime.fromisoformat(row[11]),
-            updated_at=datetime.fromisoformat(row[12]),
+            capture_method=row[11],
+            observer_training_verified=bool(row[12]),
+            device_id=row[13],
+            device_validation_recorded=bool(row[14]),
+            recorded_by=row[15],
+            review_status=row[16],
+            created_at=datetime.fromisoformat(row[17]),
+            updated_at=datetime.fromisoformat(row[18]),
         )
