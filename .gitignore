@@ -10,6 +10,15 @@ backend/venv/
 **/dist/
 **/.vite/
 *.egg-info/
+**/build/
+**/local.properties
+
+# ── Generated delivery artifacts ──
+*.apk
+*.aab
+*.zip
+*.pdf
+*软著源代码*.txt
 
 # ── Runtime / IDE ──
 .claude/
