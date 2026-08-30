@@ -123,6 +123,7 @@ export type WorkflowStatus =
 export type SeverityLevel = "none" | "mild" | "moderate" | "severe";
 export type ScreeningStatus =
   | "in_progress"
+  | "pending_standard_screening"
   | "pending_report"
   | "completed"
   | "pending_recapture"
@@ -181,6 +182,7 @@ export interface ProtocolAnalyzeRequest {
   device_id?: string | null;
   device_validation_recorded?: boolean;
   recorded_by?: string | null;
+  idempotency_key?: string | null;
 }
 
 export interface ProtocolResultResponse {
@@ -201,6 +203,8 @@ export interface ProtocolResultResponse {
   device_validation_recorded: boolean;
   recorded_by: string | null;
   review_status: ReviewStatus;
+  evidence_id: string | null;
+  evidence_version: number | null;
   severity_grades?: Record<string, SeverityLevel> | null;
   psi_score?: number | null;
   created_at: string;
@@ -301,6 +305,46 @@ export interface ReportReadinessResponse {
 export interface ProtocolReviewRequest {
   decision: "approved" | "rejected";
   reviewed_by: string;
+  reason?: string;
+}
+
+export interface EvidenceRecordResponse {
+  evidence_id: string;
+  session_id: string;
+  protocol: ProtocolType;
+  version: number;
+  supersedes_evidence_id: string | null;
+  idempotency_key: string | null;
+  result: ProtocolResultResponse;
+  recorded_by: string | null;
+  created_at: string;
+}
+
+export interface EvidenceReviewEventResponse {
+  review_event_id: string;
+  evidence_id: string;
+  decision: "approved" | "rejected";
+  reviewed_by: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface WorkflowEventResponse {
+  workflow_event_id: string;
+  session_id: string;
+  from_status: string | null;
+  to_status: WorkflowStatus;
+  trigger: string;
+  actor_id: string | null;
+  evidence_id: string | null;
+  created_at: string;
+}
+
+export interface WorkflowStateResponse {
+  session_id: string;
+  status: WorkflowStatus;
+  readiness: ReportReadinessResponse;
+  history: WorkflowEventResponse[];
 }
 
 export interface LlmAnalysisResponse {

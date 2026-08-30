@@ -4,6 +4,8 @@ import type {
   CameraAnalysisSessionResponse,
   CameraFrameAnalysisResponse,
   CameraStatusResponse,
+  EvidenceRecordResponse,
+  EvidenceReviewEventResponse,
   HealthResponse,
   LlmAnalysisResponse,
   ReportPreviewRequest,
@@ -23,6 +25,7 @@ import type {
   SquatAssessmentResult,
   SubjectCreateRequest,
   SubjectResponse,
+  WorkflowStateResponse,
 } from "../types/api";
 
 async function buildError(response: Response): Promise<Error> {
@@ -150,6 +153,18 @@ export const apiClient = {
         method: "POST",
         body: JSON.stringify(payload),
       },
+    ),
+  listEvidence: (sessionId: string, latestOnly = false) =>
+    request<EvidenceRecordResponse[]>(
+      `/api/v1/screening/sessions/${encodeURIComponent(sessionId)}/evidence?latest_only=${latestOnly}`,
+    ),
+  listEvidenceReviews: (sessionId: string, evidenceId: string) =>
+    request<EvidenceReviewEventResponse[]>(
+      `/api/v1/screening/sessions/${encodeURIComponent(sessionId)}/evidence/${encodeURIComponent(evidenceId)}/reviews`,
+    ),
+  getWorkflowState: (sessionId: string) =>
+    request<WorkflowStateResponse>(
+      `/api/v1/screening/sessions/${encodeURIComponent(sessionId)}/workflow`,
     ),
   generateIntegratedReport: (sessionId: string) =>
     request<IntegratedReportResponse>(

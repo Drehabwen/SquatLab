@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
 from app.api.deps import get_screening_repository
 from app.features.screening.importer import (
@@ -13,6 +13,8 @@ from app.features.screening.repository import ScreeningRepository
 from app.features.screening.schemas import (
     BatchImportResponse,
     BatchImportRowResult,
+    EvidenceRecordResponse,
+    EvidenceReviewEventResponse,
     IntegratedReportResponse,
     LlmAnalysisResponse,
     ProtocolAnalyzeRequest,
@@ -26,6 +28,7 @@ from app.features.screening.schemas import (
     ScreeningSessionSummary,
     SubjectCreateRequest,
     SubjectResponse,
+    WorkflowStateResponse,
     build_protocol_result_id,
 )
 from app.features.screening.service import ScreeningAnalysisService
@@ -103,8 +106,10 @@ def analyze_protocol(
         device_validation_recorded=payload.device_validation_recorded,
         recorded_by=payload.recorded_by,
     )
-    repository.save_protocol_result(result)
-    return result
+    return repository.save_protocol_result(
+        result,
+        idempotency_key=payload.idempotency_key,
+    )
 
 
 @router.post(
@@ -154,7 +159,46 @@ def review_protocol(
         protocol=protocol,
         decision=payload.decision,
         reviewed_by=payload.reviewed_by,
+        reason=payload.reason,
     )
+
+
+@router.get(
+    "/screening/sessions/{session_id}/evidence",
+    response_model=list[EvidenceRecordResponse],
+)
+def list_screening_evidence(
+    session_id: str,
+    latest_only: bool = Query(default=False),
+    repository: ScreeningRepository = Depends(get_screening_repository),
+) -> list[EvidenceRecordResponse]:
+    return repository.list_evidence_records(
+        session_id,
+        latest_only=latest_only,
+    )
+
+
+@router.get(
+    "/screening/sessions/{session_id}/evidence/{evidence_id}/reviews",
+    response_model=list[EvidenceReviewEventResponse],
+)
+def list_evidence_reviews(
+    session_id: str,
+    evidence_id: str,
+    repository: ScreeningRepository = Depends(get_screening_repository),
+) -> list[EvidenceReviewEventResponse]:
+    return repository.list_evidence_review_events(session_id, evidence_id)
+
+
+@router.get(
+    "/screening/sessions/{session_id}/workflow",
+    response_model=WorkflowStateResponse,
+)
+def get_screening_workflow(
+    session_id: str,
+    repository: ScreeningRepository = Depends(get_screening_repository),
+) -> WorkflowStateResponse:
+    return repository.get_workflow_state(session_id)
 
 
 @router.get(

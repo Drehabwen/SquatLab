@@ -84,7 +84,7 @@ def test_create_screening_session_returns_protocol_progress(client):
     session = create_screening_session(client)
 
     assert session["session_id"].startswith("screen-")
-    assert session["status"] == "in_progress"
+    assert session["status"] == "pending_standard_screening"
     assert [item["protocol"] for item in session["protocols"]] == [
         "static_posture",
         "adams_forward_bend",

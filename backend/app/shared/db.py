@@ -45,6 +45,9 @@ class DatabaseManager:
             "screening_sessions",
             "protocol_results",
             "integrated_reports",
+            "screening_evidence",
+            "evidence_review_events",
+            "workflow_events",
         }
 
         with self.connect() as connection:

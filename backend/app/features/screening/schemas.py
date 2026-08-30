@@ -40,6 +40,7 @@ WorkflowStatus = Literal[
 SeverityLevel = Literal["none", "mild", "moderate", "severe"]
 ScreeningStatus = Literal[
     "in_progress",
+    "pending_standard_screening",
     "pending_report",
     "completed",
     "pending_recapture",
@@ -101,6 +102,7 @@ class ProtocolAnalyzeRequest(BaseModel):
     device_id: str | None = Field(default=None, max_length=120)
     device_validation_recorded: bool = False
     recorded_by: str | None = Field(default=None, max_length=120)
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=160)
 
 
 class ProtocolResultResponse(BaseModel):
@@ -121,6 +123,8 @@ class ProtocolResultResponse(BaseModel):
     device_validation_recorded: bool = False
     recorded_by: str | None = None
     review_status: ReviewStatus = "not_required"
+    evidence_id: str | None = None
+    evidence_version: int | None = None
     created_at: datetime
     updated_at: datetime
     # Static posture enriched fields (null for other protocols)
@@ -208,6 +212,46 @@ class ReportReadinessResponse(BaseModel):
 class ProtocolReviewRequest(BaseModel):
     decision: Literal["approved", "rejected"]
     reviewed_by: str = Field(min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=500)
+
+
+class EvidenceRecordResponse(BaseModel):
+    evidence_id: str
+    session_id: str
+    protocol: ProtocolType
+    version: int
+    supersedes_evidence_id: str | None = None
+    idempotency_key: str | None = None
+    result: ProtocolResultResponse
+    recorded_by: str | None = None
+    created_at: datetime
+
+
+class EvidenceReviewEventResponse(BaseModel):
+    review_event_id: str
+    evidence_id: str
+    decision: Literal["approved", "rejected"]
+    reviewed_by: str
+    reason: str
+    created_at: datetime
+
+
+class WorkflowEventResponse(BaseModel):
+    workflow_event_id: str
+    session_id: str
+    from_status: str | None = None
+    to_status: WorkflowStatus
+    trigger: str
+    actor_id: str | None = None
+    evidence_id: str | None = None
+    created_at: datetime
+
+
+class WorkflowStateResponse(BaseModel):
+    session_id: str
+    status: WorkflowStatus
+    readiness: ReportReadinessResponse
+    history: list[WorkflowEventResponse]
 
 
 def build_subject_id() -> str:
@@ -221,6 +265,18 @@ def build_screening_session_id() -> str:
 def build_protocol_result_id(protocol: ProtocolType) -> str:
     prefix = protocol.replace("_", "-")
     return f"res-{prefix}-{uuid4().hex[:8]}"
+
+
+def build_evidence_id() -> str:
+    return f"evidence-{uuid4().hex[:12]}"
+
+
+def build_review_event_id() -> str:
+    return f"review-{uuid4().hex[:12]}"
+
+
+def build_workflow_event_id() -> str:
+    return f"workflow-{uuid4().hex[:12]}"
 
 
 class BatchImportRowResult(BaseModel):

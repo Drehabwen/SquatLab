@@ -4,7 +4,10 @@ from datetime import UTC, datetime
 from app.core.errors import ConflictError, NotFoundError
 from app.shared.db import DatabaseManager
 
+from .readiness import ReportReadinessPolicy
 from .schemas import (
+    EvidenceRecordResponse,
+    EvidenceReviewEventResponse,
     IntegratedReportResponse,
     ProtocolProgress,
     ProtocolResultResponse,
@@ -14,9 +17,15 @@ from .schemas import (
     ScreeningSessionSummary,
     SubjectCreateRequest,
     SubjectResponse,
+    WorkflowEventResponse,
+    WorkflowStateResponse,
+    WorkflowStatus,
+    build_evidence_id,
+    build_review_event_id,
     build_screening_session_id,
-    build_subject_id,
+    build_workflow_event_id,
 )
+from .workflow import ScreeningWorkflowMachine
 
 PROTOCOL_SEQUENCE: list[ProtocolType] = [
     "static_posture",
@@ -144,8 +153,24 @@ class ScreeningRepository:
                 (
                     session_id,
                     subject_id,
-                    "in_progress",
+                    "pending_standard_screening",
                     json.dumps(unique_protocols, ensure_ascii=False),
+                    created_at.isoformat(),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO workflow_events (
+                    workflow_event_id, session_id, from_status, to_status,
+                    trigger, actor_id, evidence_id, created_at
+                )
+                VALUES (?, ?, NULL, ?, ?, NULL, NULL, ?)
+                """,
+                (
+                    build_workflow_event_id(),
+                    session_id,
+                    "pending_standard_screening",
+                    "session_created",
                     created_at.isoformat(),
                 ),
             )
@@ -153,7 +178,7 @@ class ScreeningRepository:
         return ScreeningSessionCreateResponse(
             session_id=session_id,
             subject_id=subject_id,
-            status="in_progress",
+            status="pending_standard_screening",
             protocols=[ProtocolProgress(protocol=protocol, status="not_started") for protocol in unique_protocols],
             created_at=created_at,
         )
@@ -215,64 +240,85 @@ class ScreeningRepository:
             for row in rows
         ]
 
-    def save_protocol_result(self, result: ProtocolResultResponse) -> None:
+    def save_protocol_result(
+        self,
+        result: ProtocolResultResponse,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ProtocolResultResponse:
         self._get_session_row(result.session_id)
         with self.db.connect() as connection:
+            if idempotency_key:
+                existing = connection.execute(
+                    """
+                    SELECT evidence_id, session_id, protocol_type, version,
+                           supersedes_evidence_id, idempotency_key, result_snapshot,
+                           recorded_by, created_at
+                    FROM screening_evidence
+                    WHERE session_id = ? AND idempotency_key = ?
+                    """,
+                    (result.session_id, idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    record = self._evidence_record_from_row(existing, connection)
+                    if record.protocol != result.protocol:
+                        raise ConflictError(
+                            "同一幂等键不能用于不同筛查协议。"
+                        )
+                    return record.result
+
+            previous = connection.execute(
+                """
+                SELECT evidence_id, version
+                FROM screening_evidence
+                WHERE session_id = ? AND protocol_type = ?
+                ORDER BY version DESC
+                LIMIT 1
+                """,
+                (result.session_id, result.protocol),
+            ).fetchone()
+            version = (previous[1] + 1) if previous else 1
+            evidence_id = build_evidence_id()
+            versioned_result = result.model_copy(
+                update={
+                    "evidence_id": evidence_id,
+                    "evidence_version": version,
+                }
+            )
             connection.execute(
                 """
-                INSERT INTO protocol_results (
-                    result_id, session_id, protocol_type, status, capture_quality,
-                    metrics, findings, risk_flags, recommendations,
-                    needs_recapture, needs_review, capture_method,
-                    observer_training_verified, device_id,
-                    device_validation_recorded, recorded_by, review_status,
-                    created_at, updated_at
+                INSERT INTO screening_evidence (
+                    evidence_id, session_id, protocol_type, version,
+                    supersedes_evidence_id, idempotency_key, result_snapshot,
+                    recorded_by, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(session_id, protocol_type) DO UPDATE SET
-                    status = excluded.status,
-                    capture_quality = excluded.capture_quality,
-                    metrics = excluded.metrics,
-                    findings = excluded.findings,
-                    risk_flags = excluded.risk_flags,
-                    recommendations = excluded.recommendations,
-                    needs_recapture = excluded.needs_recapture,
-                    needs_review = excluded.needs_review,
-                    capture_method = excluded.capture_method,
-                    observer_training_verified = excluded.observer_training_verified,
-                    device_id = excluded.device_id,
-                    device_validation_recorded = excluded.device_validation_recorded,
-                    recorded_by = excluded.recorded_by,
-                    review_status = excluded.review_status,
-                    updated_at = excluded.updated_at
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    result.result_id,
+                    evidence_id,
                     result.session_id,
                     result.protocol,
-                    result.status,
-                    result.capture_quality,
-                    json.dumps(result.metrics, ensure_ascii=False),
-                    json.dumps(result.findings, ensure_ascii=False),
-                    json.dumps(result.risk_flags, ensure_ascii=False),
-                    json.dumps(result.recommendations, ensure_ascii=False),
-                    int(result.needs_recapture),
-                    int(result.needs_review),
-                    result.capture_method,
-                    int(result.observer_training_verified),
-                    result.device_id,
-                    int(result.device_validation_recorded),
+                    version,
+                    previous[0] if previous else None,
+                    idempotency_key,
+                    json.dumps(versioned_result.model_dump(mode="json"), ensure_ascii=False),
                     result.recorded_by,
-                    result.review_status,
                     result.created_at.isoformat(),
-                    result.updated_at.isoformat(),
                 ),
             )
-        self._refresh_session_status(result.session_id)
+            self._upsert_protocol_projection(connection, versioned_result)
+
+        self._refresh_session_status(
+            result.session_id,
+            trigger="evidence_submitted",
+            actor_id=result.recorded_by,
+            evidence_id=evidence_id,
+        )
+        return versioned_result
 
     def list_protocol_results(self, session_id: str) -> list[ProtocolResultResponse]:
         with self.db.connect() as connection:
-            rows = connection.execute(
+            projection_rows = connection.execute(
                 """
                 SELECT result_id, session_id, protocol_type, status, capture_quality,
                        metrics, findings, risk_flags, recommendations,
@@ -286,7 +332,107 @@ class ScreeningRepository:
                 """,
                 (session_id,),
             ).fetchall()
-        return [self._protocol_result_from_row(row) for row in rows]
+            results = {
+                result.protocol: result
+                for result in (
+                    self._protocol_result_from_row(row) for row in projection_rows
+                )
+            }
+            evidence_rows = connection.execute(
+                """
+                SELECT e.evidence_id, e.session_id, e.protocol_type, e.version,
+                       e.supersedes_evidence_id, e.idempotency_key,
+                       e.result_snapshot, e.recorded_by, e.created_at
+                FROM screening_evidence e
+                WHERE e.session_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM screening_evidence newer
+                      WHERE newer.session_id = e.session_id
+                        AND newer.protocol_type = e.protocol_type
+                        AND newer.version > e.version
+                  )
+                ORDER BY e.created_at ASC
+                """,
+                (session_id,),
+            ).fetchall()
+            for row in evidence_rows:
+                record = self._evidence_record_from_row(row, connection)
+                results[record.protocol] = record.result
+        return list(results.values())
+
+    def list_evidence_records(
+        self,
+        session_id: str,
+        *,
+        latest_only: bool = False,
+    ) -> list[EvidenceRecordResponse]:
+        self._get_session_row(session_id)
+        latest_clause = """
+          AND NOT EXISTS (
+              SELECT 1
+              FROM screening_evidence newer
+              WHERE newer.session_id = e.session_id
+                AND newer.protocol_type = e.protocol_type
+                AND newer.version > e.version
+          )
+        """ if latest_only else ""
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT e.evidence_id, e.session_id, e.protocol_type, e.version,
+                       e.supersedes_evidence_id, e.idempotency_key,
+                       e.result_snapshot, e.recorded_by, e.created_at
+                FROM screening_evidence e
+                WHERE e.session_id = ?
+                {latest_clause}
+                ORDER BY e.protocol_type ASC, e.version ASC
+                """,
+                (session_id,),
+            ).fetchall()
+            return [
+                self._evidence_record_from_row(row, connection)
+                for row in rows
+            ]
+
+    def list_evidence_review_events(
+        self,
+        session_id: str,
+        evidence_id: str,
+    ) -> list[EvidenceReviewEventResponse]:
+        self._get_session_row(session_id)
+        with self.db.connect() as connection:
+            evidence = connection.execute(
+                """
+                SELECT evidence_id
+                FROM screening_evidence
+                WHERE evidence_id = ? AND session_id = ?
+                """,
+                (evidence_id, session_id),
+            ).fetchone()
+            if evidence is None:
+                raise NotFoundError(f"Evidence not found: {evidence_id}")
+            rows = connection.execute(
+                """
+                SELECT review_event_id, evidence_id, decision,
+                       reviewed_by, reason, created_at
+                FROM evidence_review_events
+                WHERE evidence_id = ?
+                ORDER BY created_at ASC, rowid ASC
+                """,
+                (evidence_id,),
+            ).fetchall()
+        return [
+            EvidenceReviewEventResponse(
+                review_event_id=row[0],
+                evidence_id=row[1],
+                decision=row[2],
+                reviewed_by=row[3],
+                reason=row[4],
+                created_at=datetime.fromisoformat(row[5]),
+            )
+            for row in rows
+        ]
 
     def review_protocol_result(
         self,
@@ -295,32 +441,77 @@ class ScreeningRepository:
         protocol: ProtocolType,
         decision: str,
         reviewed_by: str,
+        reason: str = "",
     ) -> ProtocolResultResponse:
         self._get_session_row(session_id)
+        evidence_id: str | None = None
+        result: ProtocolResultResponse | None = None
         with self.db.connect() as connection:
-            cursor = connection.execute(
+            evidence = connection.execute(
                 """
-                UPDATE protocol_results
-                SET review_status = ?, recorded_by = ?, updated_at = ?
+                SELECT evidence_id, session_id, protocol_type, version,
+                       supersedes_evidence_id, idempotency_key, result_snapshot,
+                       recorded_by, created_at
+                FROM screening_evidence
                 WHERE session_id = ? AND protocol_type = ?
+                ORDER BY version DESC
+                LIMIT 1
                 """,
-                (
-                    decision,
-                    reviewed_by,
-                    datetime.now(UTC).isoformat(),
-                    session_id,
-                    protocol,
-                ),
-            )
-            if cursor.rowcount == 0:
-                raise NotFoundError(
-                    f"Protocol result not found: {session_id}/{protocol}"
+                (session_id, protocol),
+            ).fetchone()
+            if evidence is None:
+                cursor = connection.execute(
+                    """
+                    UPDATE protocol_results
+                    SET review_status = ?, recorded_by = ?, updated_at = ?
+                    WHERE session_id = ? AND protocol_type = ?
+                    """,
+                    (
+                        decision,
+                        reviewed_by,
+                        datetime.now(UTC).isoformat(),
+                        session_id,
+                        protocol,
+                    ),
                 )
-        return next(
-            result
-            for result in self.list_protocol_results(session_id)
-            if result.protocol == protocol
+                if cursor.rowcount == 0:
+                    raise NotFoundError(
+                        f"Protocol result not found: {session_id}/{protocol}"
+                    )
+            else:
+                evidence_id = evidence[0]
+                connection.execute(
+                    """
+                    INSERT INTO evidence_review_events (
+                        review_event_id, evidence_id, decision,
+                        reviewed_by, reason, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        build_review_event_id(),
+                        evidence_id,
+                        decision,
+                        reviewed_by,
+                        reason,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                result = self._evidence_record_from_row(evidence, connection).result
+
+        if result is None:
+            result = next(
+                item
+                for item in self.list_protocol_results(session_id)
+                if item.protocol == protocol
+            )
+        self._refresh_session_status(
+            session_id,
+            trigger=f"review_{decision}",
+            actor_id=reviewed_by,
+            evidence_id=evidence_id,
         )
+        return result
 
     def save_integrated_report(self, report: IntegratedReportResponse) -> None:
         with self.db.connect() as connection:
@@ -363,15 +554,19 @@ class ScreeningRepository:
             connection.execute(
                 """
                 UPDATE screening_sessions
-                SET status = ?, completed_at = ?
+                SET completed_at = ?
                 WHERE session_id = ?
                 """,
                 (
-                    "pending_recapture" if report.overall_risk == "recapture_needed" else "pending_review" if report.overall_risk == "review_required" else "completed",
                     report.created_at.isoformat(),
                     report.session_id,
                 ),
             )
+        self.transition_workflow(
+            report.session_id,
+            target="archived",
+            trigger="formal_report_generated",
+        )
 
     def get_integrated_report(self, session_id: str) -> IntegratedReportResponse:
         report = self.get_integrated_report_or_none(session_id)
@@ -455,19 +650,198 @@ class ScreeningRepository:
             raise NotFoundError(f"Screening session not found: {session_id}")
         return row
 
-    def _refresh_session_status(self, session_id: str) -> None:
-        results = self.list_protocol_results(session_id)
-        if any(result.needs_recapture for result in results):
-            status = "pending_recapture"
-        elif any(result.needs_review for result in results):
-            status = "pending_review"
-        else:
-            status = "pending_report"
+    def get_workflow_state(self, session_id: str) -> WorkflowStateResponse:
+        row = self._get_session_row(session_id)
+        readiness = ReportReadinessPolicy().evaluate(
+            session_id=session_id,
+            results=self.list_protocol_results(session_id),
+        )
+        return WorkflowStateResponse(
+            session_id=session_id,
+            status=ScreeningWorkflowMachine().normalize(row[2]),
+            readiness=readiness,
+            history=self.list_workflow_events(session_id),
+        )
+
+    def list_workflow_events(self, session_id: str) -> list[WorkflowEventResponse]:
+        self._get_session_row(session_id)
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT workflow_event_id, session_id, from_status, to_status,
+                       trigger, actor_id, evidence_id, created_at
+                FROM workflow_events
+                WHERE session_id = ?
+                ORDER BY created_at ASC, rowid ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [
+            WorkflowEventResponse(
+                workflow_event_id=row[0],
+                session_id=row[1],
+                from_status=row[2],
+                to_status=row[3],
+                trigger=row[4],
+                actor_id=row[5],
+                evidence_id=row[6],
+                created_at=datetime.fromisoformat(row[7]),
+            )
+            for row in rows
+        ]
+
+    def transition_workflow(
+        self,
+        session_id: str,
+        *,
+        target: WorkflowStatus,
+        trigger: str,
+        actor_id: str | None = None,
+        evidence_id: str | None = None,
+    ) -> None:
+        machine = ScreeningWorkflowMachine()
+        row = self._get_session_row(session_id)
+        current_raw = row[2]
+        current = machine.normalize(current_raw)
+        if current == target:
+            return
+        if not machine.can_transition(current_raw, target):
+            raise ConflictError(f"不允许的工作流转换：{current} → {target}")
+        timestamp = datetime.now(UTC)
         with self.db.connect() as connection:
             connection.execute(
                 "UPDATE screening_sessions SET status = ? WHERE session_id = ?",
-                (status, session_id),
+                (target, session_id),
             )
+            connection.execute(
+                """
+                INSERT INTO workflow_events (
+                    workflow_event_id, session_id, from_status, to_status,
+                    trigger, actor_id, evidence_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    build_workflow_event_id(),
+                    session_id,
+                    current,
+                    target,
+                    trigger,
+                    actor_id,
+                    evidence_id,
+                    timestamp.isoformat(),
+                ),
+            )
+
+    def _refresh_session_status(
+        self,
+        session_id: str,
+        *,
+        trigger: str,
+        actor_id: str | None = None,
+        evidence_id: str | None = None,
+    ) -> None:
+        readiness = ReportReadinessPolicy().evaluate(
+            session_id=session_id,
+            results=self.list_protocol_results(session_id),
+        )
+        target = ScreeningWorkflowMachine().target_for_readiness(readiness.state)
+        self.transition_workflow(
+            session_id,
+            target=target,
+            trigger=trigger,
+            actor_id=actor_id,
+            evidence_id=evidence_id,
+        )
+
+    def _upsert_protocol_projection(
+        self,
+        connection,
+        result: ProtocolResultResponse,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO protocol_results (
+                result_id, session_id, protocol_type, status, capture_quality,
+                metrics, findings, risk_flags, recommendations,
+                needs_recapture, needs_review, capture_method,
+                observer_training_verified, device_id,
+                device_validation_recorded, recorded_by, review_status,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, protocol_type) DO UPDATE SET
+                status = excluded.status,
+                capture_quality = excluded.capture_quality,
+                metrics = excluded.metrics,
+                findings = excluded.findings,
+                risk_flags = excluded.risk_flags,
+                recommendations = excluded.recommendations,
+                needs_recapture = excluded.needs_recapture,
+                needs_review = excluded.needs_review,
+                capture_method = excluded.capture_method,
+                observer_training_verified = excluded.observer_training_verified,
+                device_id = excluded.device_id,
+                device_validation_recorded = excluded.device_validation_recorded,
+                recorded_by = excluded.recorded_by,
+                review_status = excluded.review_status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                result.result_id,
+                result.session_id,
+                result.protocol,
+                result.status,
+                result.capture_quality,
+                json.dumps(result.metrics, ensure_ascii=False),
+                json.dumps(result.findings, ensure_ascii=False),
+                json.dumps(result.risk_flags, ensure_ascii=False),
+                json.dumps(result.recommendations, ensure_ascii=False),
+                int(result.needs_recapture),
+                int(result.needs_review),
+                result.capture_method,
+                int(result.observer_training_verified),
+                result.device_id,
+                int(result.device_validation_recorded),
+                result.recorded_by,
+                result.review_status,
+                result.created_at.isoformat(),
+                result.updated_at.isoformat(),
+            ),
+        )
+
+    def _evidence_record_from_row(
+        self,
+        row,
+        connection,
+    ) -> EvidenceRecordResponse:
+        result = ProtocolResultResponse.model_validate(json.loads(row[6]))
+        review = connection.execute(
+            """
+            SELECT decision
+            FROM evidence_review_events
+            WHERE evidence_id = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (row[0],),
+        ).fetchone()
+        if review is not None:
+            result = result.model_copy(update={"review_status": review[0]})
+        result = result.model_copy(
+            update={"evidence_id": row[0], "evidence_version": row[3]}
+        )
+        return EvidenceRecordResponse(
+            evidence_id=row[0],
+            session_id=row[1],
+            protocol=row[2],
+            version=row[3],
+            supersedes_evidence_id=row[4],
+            idempotency_key=row[5],
+            result=result,
+            recorded_by=row[7],
+            created_at=datetime.fromisoformat(row[8]),
+        )
 
     def _protocol_result_from_row(self, row) -> ProtocolResultResponse:
         return ProtocolResultResponse(
